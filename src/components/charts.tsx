@@ -185,8 +185,25 @@ export function ComboChart({
   );
 }
 
-/** تراز کالری: منفی (کسری) سبز، مثبت (مازاد) قرمز */
-export function BalanceChart({ data, x, k, height = 260 }: { data: Row[]; x: string; k: string; height?: number }) {
+/** تراز کالری: هم‌جهت با هدف برنامه سبز، خلاف آن قرمز */
+export function BalanceChart({
+  data,
+  x,
+  k,
+  height = 260,
+  goal = "lose",
+  band = 200,
+  goodKey,
+}: {
+  data: Row[];
+  x: string;
+  k: string;
+  height?: number;
+  goal?: "lose" | "gain" | "maintain";
+  band?: number; // برای «حفظ وزن»: محدوده متعادل روزانه
+  goodKey?: string; // اگر داده خودش «خوب/بد» بودن را دارد (جمع‌بندی هفتگی/ماهانه)
+}) {
+  const good = (v: number) => (goal === "lose" ? v < 0 : goal === "gain" ? v > 0 : Math.abs(v) <= band);
   const p = usePalette();
   // محور همیشه صفر را شامل شود و تیک‌ها عدد رُند باشند
   const vals = data.map((d) => d[k]).filter((v): v is number => typeof v === "number");
@@ -213,7 +230,7 @@ export function BalanceChart({ data, x, k, height = 260 }: { data: Row[]; x: str
         <Tooltip content={<Tip unit="کیلوکالری" digits={0} />} cursor={{ fill: p.grid, opacity: 0.5 }} />
         <Bar dataKey={k} name="تراز" radius={4} maxBarSize={34}>
           {data.map((d, i) => (
-            <Cell key={i} fill={Number(d[k]) < 0 ? p.deficit : p.surplus} />
+            <Cell key={i} fill={(goodKey ? d[goodKey] === 1 : good(Number(d[k]))) ? p.deficit : p.surplus} />
           ))}
         </Bar>
       </BarChart>

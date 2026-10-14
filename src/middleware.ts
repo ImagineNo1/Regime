@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { SESSION_COOKIE, verifySession } from "@/lib/auth";
+import { readSession, SESSION_COOKIE } from "@/lib/auth";
 
 // آدرس ریدایرکت از هدر Host خود درخواست ساخته می‌شود؛ وگرنه در حالت standalone
 // یا پشت ریورس‌پراکسی ممکن است به localhost فرستاده شوید.
@@ -10,10 +10,12 @@ function go(req: NextRequest, path: string) {
 }
 
 export async function middleware(req: NextRequest) {
-  const ok = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);
-  const isLogin = req.nextUrl.pathname === "/login";
-  if (!ok && !isLogin) return go(req, "/login");
-  if (ok && isLogin) return go(req, "/");
+  if (req.nextUrl.pathname === "/auth/clear") return NextResponse.next();
+  // فقط امضای کوکی بررسی می‌شود؛ وجود کاربر و نسخه نشست در خود صفحه‌ها (requireUser) چک می‌شود
+  const ok = !!(await readSession(req.cookies.get(SESSION_COOKIE)?.value));
+  const isPublic = req.nextUrl.pathname === "/login" || req.nextUrl.pathname === "/signup";
+  if (!ok && !isPublic) return go(req, "/login");
+  if (ok && isPublic) return go(req, "/");
   return NextResponse.next();
 }
 

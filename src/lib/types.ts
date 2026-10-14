@@ -5,15 +5,39 @@ export type Meal = (typeof MEALS)[number];
 
 export type Gender = "مرد" | "زن";
 
-export interface Settings {
+/** مشخصات ثابت هر کاربر (برای فرمول سوخت‌وساز پایه) */
+export interface Profile {
+  name: string;
   gender: Gender;
   age: number;
   height: number; // سانتی‌متر
-  startWeight: number; // کیلوگرم
-  targetWeight: number;
+}
+
+export interface User extends Profile {
+  id: string;
+  username: string;
+  activePlanId: string | null;
+}
+
+export type Goal = "lose" | "gain" | "maintain";
+
+export const GOALS: Record<Goal, { label: string; short: string }> = {
+  lose: { label: "کاهش وزن", short: "کاهش" },
+  gain: { label: "افزایش وزن", short: "افزایش" },
+  maintain: { label: "حفظ وزن", short: "حفظ" },
+};
+
+/** یک دوره/برنامه رژیم */
+export interface Plan {
+  id: string;
+  name: string;
+  goal: Goal;
   startDate: string; // ISO میلادی
+  endDate: string | null; // بدون پایان = null
+  startWeight: number;
+  targetWeight: number;
+  dailyDelta: number; // کسری (کاهش) یا مازاد (افزایش) کالری روزانه؛ برای حفظ وزن ۰
   activityFactor: number; // ضریب تحرک بدون ورزش
-  deficit: number; // کسری کالری روزانه هدف
   minCal: number; // حداقل کالری ایمن
 }
 
@@ -38,9 +62,9 @@ export interface FoodLog {
   name: string;
   unit: Unit | "";
   qty: number | null;
-  kcal: number; // کالری نهایی همین ردیف
+  kcal: number;
   protein: number;
-  manual: boolean; // کالری دستی وارد شده
+  manual: boolean;
   note?: string;
 }
 

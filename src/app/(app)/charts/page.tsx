@@ -2,7 +2,8 @@ import Link from "next/link";
 import { BalanceChart, ComboChart, MealDonut, WeightChart } from "@/components/charts";
 import { Card, PageHeader } from "@/components/ui";
 import { monthly, weekly } from "@/lib/calc";
-import { getAll } from "@/lib/data";
+import { getPlanData } from "@/lib/data";
+import { NoPlan } from "@/components/NoPlan";
 import { jAxis } from "@/lib/jalali";
 
 const RANGES = [
@@ -14,8 +15,11 @@ const RANGES = [
 
 export default async function ChartsPage({ searchParams }: { searchParams: Promise<{ range?: string }> }) {
   const { range = "30" } = await searchParams;
-  const { settings: s, days, today } = await getAll();
+  const { plan: s, days, today } = await getPlanData();
+  if (!s) return <NoPlan title="نمودارها" />;
   const upToToday = days.filter((d) => d.date <= today);
+  const goalWord = s.goal === "lose" ? "کسری" : s.goal === "gain" ? "مازاد" : "تعادل";
+  const balanceSub = `سبز = هم‌جهت با هدف (${goalWord}) · قرمز = خلاف هدف`;
   const n = range === "all" ? upToToday.length : Number(range) || 30;
   const win = upToToday.slice(-n);
 
@@ -39,6 +43,7 @@ export default async function ChartsPage({ searchParams }: { searchParams: Promi
   const weeks = weekly(upToToday, s).map((w) => ({
     label: w.label,
     balance: w.loggedDays ? w.balance : null,
+    good: w.good ? 1 : 0,
     avgWeight: w.avgWeight,
     avgIntake: w.avgIntake,
     exercise: w.exercise || null,
@@ -48,6 +53,7 @@ export default async function ChartsPage({ searchParams }: { searchParams: Promi
   const months = monthly(upToToday, s).map((m) => ({
     label: m.label,
     balance: m.loggedDays ? m.balance : null,
+    good: m.good ? 1 : 0,
     avgIntake: m.avgIntake,
     exercise: m.exercise || null,
     weight: m.avgWeight,
@@ -56,7 +62,7 @@ export default async function ChartsPage({ searchParams }: { searchParams: Promi
 
   return (
     <div className="space-y-8">
-      <PageHeader title="نمودارها" subtitle="همه نمودارها خودکار از ثبت‌های روزانه ساخته می‌شوند.">
+      <PageHeader title="نمودارها" subtitle={`برنامه «${s.name}» — همه نمودارها خودکار از ثبت‌های روزانه ساخته می‌شوند.`}>
         <div className="flex rounded-xl border border-line bg-surface p-1 shadow-card">
           {RANGES.map((r) => (
             <Link
@@ -84,8 +90,8 @@ export default async function ChartsPage({ searchParams }: { searchParams: Promi
             ]}
           />
         </Card>
-        <Card title="تراز کالری روزانه" subtitle="سبز = کسری (خوب) · قرمز = مازاد">
-          <BalanceChart data={daily} x="day" k="balance" />
+        <Card title="تراز کالری روزانه" subtitle={balanceSub}>
+          <BalanceChart data={daily} x="day" k="balance" goal={s.goal} />
         </Card>
         <Card title="پروتئین روزانه" subtitle="گرم">
           <ComboChart data={daily} x="day" unit="گرم" bars={[{ key: "protein", name: "پروتئین", color: "protein" }]} height={260} digits={0} />
@@ -99,14 +105,14 @@ export default async function ChartsPage({ searchParams }: { searchParams: Promi
       </Section>
 
       <Section title="وزن">
-        <Card title="روند وزن روزانه و وزن هدف" subtitle="خط‌چین نارنجی: وزن هدف" className="lg:col-span-2">
+        <Card title="روند وزن روزانه و وزن هدف" subtitle={s.goal === "maintain" ? "خط‌چین نارنجی: وزن پایه" : "خط‌چین نارنجی: وزن هدف"} className="lg:col-span-2">
           <WeightChart data={daily} x="day" target={s.targetWeight} height={340} />
         </Card>
       </Section>
 
-      <Section title="هفتگی" note="هر هفته ۷ روز از تاریخ شروع رژیم است.">
-        <Card title="تراز کالری هفتگی" subtitle="سبز = کسری (خوب) · قرمز = مازاد">
-          <BalanceChart data={weeks} x="label" k="balance" />
+      <Section title="هفتگی" note="هر هفته ۷ روز از تاریخ شروع برنامه است.">
+        <Card title="تراز کالری هفتگی" subtitle={balanceSub}>
+          <BalanceChart data={weeks} x="label" k="balance" goal={s.goal} goodKey="good" />
         </Card>
         <Card title="میانگین وزن هفتگی">
           <WeightChart data={weeks} x="label" target={s.targetWeight} height={260} />
@@ -120,8 +126,8 @@ export default async function ChartsPage({ searchParams }: { searchParams: Promi
       </Section>
 
       <Section title="ماهانه" note="بر اساس ماه‌های تقویم شمسی.">
-        <Card title="تراز کالری ماهانه" subtitle="سبز = کسری (خوب) · قرمز = مازاد">
-          <BalanceChart data={months} x="label" k="balance" />
+        <Card title="تراز کالری ماهانه" subtitle={balanceSub}>
+          <BalanceChart data={months} x="label" k="balance" goal={s.goal} goodKey="good" />
         </Card>
         <Card title="میانگین وزن ماهانه">
           <WeightChart data={months} x="label" target={s.targetWeight} height={260} />

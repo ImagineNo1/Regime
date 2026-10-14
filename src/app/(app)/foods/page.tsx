@@ -1,9 +1,10 @@
 import { FoodBank } from "@/components/FoodBank";
 import { PageHeader } from "@/components/ui";
-import { getFoods } from "@/lib/data";
+import { getFoods, requireUser } from "@/lib/data";
 
 export default async function FoodsPage() {
-  const foods = await getFoods();
+  const u = await requireUser();
+  const foods = await getFoods(u._id);
   foods.sort((a, b) => a.name.localeCompare(b.name, "fa"));
   return (
     <div className="space-y-6">

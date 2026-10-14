@@ -2,21 +2,23 @@ import Link from "next/link";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Card, Empty, PageHeader } from "@/components/ui";
 import { monthly, weekly, type PeriodRow } from "@/lib/calc";
-import { getAll } from "@/lib/data";
+import { getPlanData } from "@/lib/data";
+import { NoPlan } from "@/components/NoPlan";
 import { n0, n1, signed } from "@/lib/format";
 import { jNumeric, jShort, weekday } from "@/lib/jalali";
 
 export default async function ReportsPage() {
-  const { settings: s, days, today } = await getAll();
+  const { plan: s, days, today } = await getPlanData();
+  if (!s) return <NoPlan title="گزارش‌ها" />;
   const upToToday = days.filter((d) => d.date <= today);
   const weeks = weekly(upToToday, s);
   const months = monthly(upToToday, s);
 
   return (
     <div className="space-y-6">
-      <PageHeader title="گزارش‌ها" subtitle="جمع‌بندی هفتگی، ماهانه و جزئیات همه روزها." />
+      <PageHeader title="گزارش‌ها" subtitle={`برنامه «${s.name}» — جمع‌بندی هفتگی، ماهانه و جزئیات همه روزها.`} />
 
-      <Card title="هفتگی" subtitle="هر هفته ۷ روز از تاریخ شروع رژیم" pad={false}>
+      <Card title="هفتگی" subtitle="هر هفته ۷ روز از تاریخ شروع برنامه" pad={false}>
         <PeriodTable rows={[...weeks].reverse()} showRange />
       </Card>
 
@@ -26,7 +28,7 @@ export default async function ReportsPage() {
 
       <Card title="همه روزها" subtitle="جدیدترین بالا" pad={false}>
         {upToToday.length === 0 ? (
-          <div className="p-5"><Empty>رژیم هنوز شروع نشده است.</Empty></div>
+          <div className="p-5"><Empty>این برنامه هنوز شروع نشده است.</Empty></div>
         ) : (
           <div className="max-h-[70vh] overflow-auto">
             <table className="tbl">
@@ -74,8 +76,8 @@ export default async function ReportsPage() {
                     <Num v={d.exercise} />
                     <td className="tnum">{n0(d.burned)}</td>
                     <td className="tnum text-ink-2">{n0(d.goal)}</td>
-                    <td className={`tnum font-semibold ${d.balance === null ? "" : d.balance < 0 ? "text-good" : "text-bad"}`}>{signed(d.balance)}</td>
-                    <td><StatusBadge status={d.status} /></td>
+                    <td className={`tnum font-semibold ${d.status === "good" ? "text-good" : d.status === "bad" ? "text-bad" : ""}`}>{signed(d.balance)}</td>
+                    <td><StatusBadge status={d.status} goal={s.goal} /></td>
                     <td className="tnum">{signed(d.cumBalance)}</td>
                     <td className="tnum">{d.cumBalance === null ? "—" : `${signed(d.cumBalance / 7700, 1)} کیلو`}</td>
                   </tr>
@@ -107,7 +109,7 @@ function PeriodTable({ rows, showRange = false }: { rows: PeriodRow[]; showRange
             <th>میانگین پروتئین</th>
             <th>جمع ورزش</th>
             <th>جمع تراز کالری</th>
-            <th>کاهش وزن تخمینی</th>
+            <th>تغییر وزن تخمینی</th>
             <th>میانگین وزن</th>
             <th>تغییر وزن واقعی</th>
             <th>ارزیابی</th>
@@ -126,18 +128,18 @@ function PeriodTable({ rows, showRange = false }: { rows: PeriodRow[]; showRange
               <td className="tnum">{r.avgIntake === null ? "—" : n0(r.avgIntake)}</td>
               <td className="tnum">{r.avgProtein === null ? "—" : `${n1(r.avgProtein)} گرم`}</td>
               <td className="tnum">{r.exercise ? n0(r.exercise) : "—"}</td>
-              <td className={`tnum font-semibold ${!r.loggedDays ? "" : r.balance < 0 ? "text-good" : "text-bad"}`}>
+              <td className={`tnum font-semibold ${r.good === null ? "" : r.good ? "text-good" : "text-bad"}`}>
                 {r.loggedDays ? signed(r.balance) : "—"}
               </td>
-              <td className="tnum">{r.loggedDays ? `${n1(r.estLoss)} کیلو` : "—"}</td>
+              <td className="tnum">{r.loggedDays ? `${signed(r.estChange, 1)} کیلو` : "—"}</td>
               <td className="tnum">{r.avgWeight === null ? "—" : n1(r.avgWeight)}</td>
-              <td className={`tnum ${r.weightChange === null ? "" : r.weightChange <= 0 ? "text-good" : "text-bad"}`}>
+              <td className="tnum">
                 {r.weightChange === null ? "—" : signed(r.weightChange, 1)}
               </td>
               <td>
-                {!r.loggedDays ? (
+                {r.good === null ? (
                   <span className="text-muted">—</span>
-                ) : r.balance < 0 ? (
+                ) : r.good ? (
                   <span className="font-semibold text-good">✓ موفق</span>
                 ) : (
                   <span className="font-semibold text-bad">✗ تلاش بیشتر</span>

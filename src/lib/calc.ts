@@ -1,9 +1,27 @@
-// همان فرمول‌های فایل اکسل، به صورت توابع خالص
+// همان فرمول‌های فایل اکسل، به صورت توابع خالص — حالا برای هر برنامه (کاهش / افزایش / حفظ وزن)
 import { addDays, diffDays, toJalali, jMonthLabel } from "./jalali";
-import type { ActivityLog, FoodLog, Settings, WeightLog } from "./types";
+import type { ActivityLog, FoodLog, Goal, Plan, Profile, WeightLog } from "./types";
 import type { Unit } from "./seed";
 
-export const KCAL_PER_KG = 7700; // حدود ۷۷۰۰ کیلوکالری ≈ یک کیلوگرم چربی
+export const KCAL_PER_KG = 7700; // حدود ۷۷۰۰ کیلوکالری ≈ یک کیلوگرم وزن بدن
+/** در برنامه «حفظ وزن»، تراز روزانه تا این مقدار (مثبت یا منفی) «متعادل» حساب می‌شود */
+export const MAINTAIN_BAND = 200;
+
+/** وقتی روزی داخل هیچ برنامه‌ای نیست، با این تنظیمات (حفظ وزن) حساب می‌شود */
+export function fallbackPlan(startWeight: number, date: string): Plan {
+  return {
+    id: "",
+    name: "",
+    goal: "maintain",
+    startDate: date,
+    endDate: date,
+    startWeight,
+    targetWeight: startWeight,
+    dailyDelta: 0,
+    activityFactor: 1.2,
+    minCal: 1200,
+  };
+}
 
 export function foodValues(unit: Unit, qty: number, kcalPer: number, proteinPer: number) {
   const factor = unit === "گرم" ? qty / 100 : qty;
@@ -11,16 +29,19 @@ export function foodValues(unit: Unit, qty: number, kcalPer: number, proteinPer:
 }
 
 /** Mifflin-St Jeor */
-export function bmr(s: Settings, weight: number) {
-  return Math.round(10 * weight + 6.25 * s.height - 5 * s.age + (s.gender === "مرد" ? 5 : -161));
+export function bmr(p: Profile, weight: number) {
+  return Math.round(10 * weight + 6.25 * p.height - 5 * p.age + (p.gender === "مرد" ? 5 : -161));
 }
 
-export function tdee(s: Settings, weight: number) {
-  return Math.round(bmr(s, weight) * s.activityFactor);
+export function tdee(p: Profile, factor: number, weight: number) {
+  return Math.round(bmr(p, weight) * factor);
 }
 
-export function calorieGoal(s: Settings, weight: number) {
-  return Math.max(s.minCal, tdee(s, weight) - s.deficit);
+export function calorieGoal(p: Profile, plan: Plan, weight: number) {
+  const t = tdee(p, plan.activityFactor, weight);
+  if (plan.goal === "lose") return Math.max(plan.minCal, t - plan.dailyDelta);
+  if (plan.goal === "gain") return t + plan.dailyDelta;
+  return Math.max(plan.minCal, t);
 }
 
 /** (MET − ۱) × وزن × ساعت؛ «منهای ۱» چون کالری حالت استراحت در TDEE حساب شده */
@@ -35,10 +56,23 @@ export function bmiCategory(bmi: number) {
   return "چاقی";
 }
 
-export type DayStatus = "none" | "low" | "deficit" | "surplus";
+/** آیا این تراز کالری با هدف برنامه هم‌جهت است؟ */
+export function balanceIsGood(goal: Goal, balance: number, days = 1) {
+  if (goal === "lose") return balance < 0;
+  if (goal === "gain") return balance > 0;
+  return Math.abs(balance / Math.max(1, days)) <= MAINTAIN_BAND;
+}
+
+export type DayStatus = "none" | "low" | "good" | "bad";
+
+export const STATUS_LABEL: Record<Goal, Record<"good" | "bad", string>> = {
+  lose: { good: "✓ کسری کالری", bad: "✗ مازاد کالری" },
+  gain: { good: "✓ مازاد کالری", bad: "✗ کسری کالری" },
+  maintain: { good: "✓ متعادل", bad: "✗ خارج از محدوده" },
+};
 
 export interface DayRow {
-  index: number; // روز چندم رژیم (از ۱)
+  index: number; // روز چندم برنامه (از ۱)
   date: string;
   breakfast: number;
   lunch: number;
@@ -46,8 +80,8 @@ export interface DayRow {
   snacks: number;
   intake: number;
   protein: number;
-  weight: number | null; // وزن ثبت‌شده همان روز
-  refWeight: number; // آخرین وزن تا این روز
+  weight: number | null;
+  refWeight: number;
   bmr: number;
   tdee: number;
   exercise: number;
@@ -65,8 +99,16 @@ export function exerciseFor(logs: ActivityLog[], weight: number) {
   );
 }
 
+/** آخرین روزی که جدول برنامه باید نشان دهد */
+export function planLastDay(plan: Plan, today: string, logDates: string[]) {
+  let last = plan.endDate && plan.endDate < today ? plan.endDate : today;
+  for (const d of logDates) if (d > last && d >= plan.startDate && (!plan.endDate || d <= plan.endDate)) last = d;
+  return last;
+}
+
 export function buildDays(
-  s: Settings,
+  profile: Profile,
+  plan: Plan,
   foods: FoodLog[],
   acts: ActivityLog[],
   weights: WeightLog[],
@@ -85,21 +127,17 @@ export function buildDays(
   const actMap = byDate(acts);
   const wMap = new Map(weights.map((w) => [w.date, w.kg]));
 
-  let end = today;
-  for (const d of [...foodMap.keys(), ...actMap.keys(), ...wMap.keys()]) if (d > end) end = d;
-  const n = diffDays(end, s.startDate) + 1;
+  const end = planLastDay(plan, today, [...foodMap.keys(), ...actMap.keys(), ...wMap.keys()]);
+  const n = diffDays(end, plan.startDate) + 1;
   if (n <= 0) return [];
 
-  // وزن مرجع روز اول: آخرین وزنی که قبل یا همان روز شروع ثبت شده، وگرنه وزن شروع
-  let ref = s.startWeight;
-  for (const w of [...weights].sort((a, b) => a.date.localeCompare(b.date))) {
-    if (w.date <= s.startDate) ref = w.kg;
-  }
+  // وزن مرجع: وزن شروع برنامه، تا وقتی وزن جدیدی داخل برنامه ثبت شود
+  let ref = plan.startWeight;
 
   const rows: DayRow[] = [];
   let cum = 0;
   for (let i = 0; i < n; i++) {
-    const date = addDays(s.startDate, i);
+    const date = addDays(plan.startDate, i);
     const fl = foodMap.get(date) ?? [];
     const al = actMap.get(date) ?? [];
     const w = wMap.get(date) ?? null;
@@ -114,15 +152,21 @@ export function buildDays(
       protein += f.protein;
     }
     const intake = breakfast + lunch + dinner + snacks;
-    const b = bmr(s, ref);
-    const t = Math.round(b * s.activityFactor);
+    const b = bmr(profile, ref);
+    const t = Math.round(b * plan.activityFactor);
     const exercise = exerciseFor(al, ref);
     const burned = t + exercise;
-    const goal = Math.max(s.minCal, t - s.deficit);
+    const goal = calorieGoal(profile, plan, ref);
     const balance = intake > 0 ? intake - burned : null;
     if (balance !== null) cum += balance;
     const status: DayStatus =
-      intake === 0 ? "none" : intake < s.minCal ? "low" : balance! < 0 ? "deficit" : "surplus";
+      intake === 0
+        ? "none"
+        : intake < plan.minCal
+          ? "low"
+          : balanceIsGood(plan.goal, balance!)
+            ? "good"
+            : "bad";
 
     rows.push({
       index: i + 1,
@@ -148,6 +192,48 @@ export function buildDays(
   return rows;
 }
 
+/* ---------------- پیشرفت برنامه ---------------- */
+
+export interface Progress {
+  direction: -1 | 0 | 1; // کاهش، حفظ، افزایش
+  change: number; // تغییر وزن از شروع (منفی = کاهش)
+  remaining: number; // کیلوگرم باقی‌مانده در جهت هدف (برای حفظ وزن: فاصله از وزن شروع)
+  fraction: number; // ۰ تا ۱
+  weeksPlan: number | null;
+  weeksReal: number | null;
+  daysLeft: number | null; // تا پایان دوره
+  neededDelta: number | null; // کالری روزانه لازم برای رسیدن به هدف تا پایان دوره
+}
+
+export function progress(plan: Plan, curW: number, avgBalance: number | null, today: string): Progress {
+  const direction = plan.goal === "lose" ? -1 : plan.goal === "gain" ? 1 : 0;
+  const change = Math.round((curW - plan.startWeight) * 10) / 10;
+  const daysLeft = plan.endDate ? Math.max(0, diffDays(plan.endDate, today)) : null;
+  if (direction === 0) {
+    return {
+      direction,
+      change,
+      remaining: Math.abs(change),
+      fraction: Math.abs(change) <= 1 ? 1 : 0,
+      weeksPlan: null,
+      weeksReal: null,
+      daysLeft,
+      neededDelta: null,
+    };
+  }
+  const total = Math.abs(plan.targetWeight - plan.startWeight);
+  const remaining = Math.max(0, (plan.targetWeight - curW) * direction);
+  const done = (curW - plan.startWeight) * direction;
+  const fraction = total ? Math.max(0, Math.min(1, done / total)) : 1;
+  const weeksPlan = plan.dailyDelta > 0 ? (remaining * KCAL_PER_KG) / (plan.dailyDelta * 7) : null;
+  const realRate = avgBalance === null ? 0 : avgBalance * direction; // کالری روزانه در جهت هدف
+  const weeksReal = realRate > 0 ? (remaining * KCAL_PER_KG) / (realRate * 7) : null;
+  const neededDelta = daysLeft && remaining > 0 ? Math.round((remaining * KCAL_PER_KG) / daysLeft) : null;
+  return { direction, change, remaining, fraction, weeksPlan, weeksReal, daysLeft, neededDelta };
+}
+
+/* ---------------- هفتگی / ماهانه ---------------- */
+
 export interface PeriodRow {
   key: string;
   label: string;
@@ -159,12 +245,13 @@ export interface PeriodRow {
   avgProtein: number | null;
   exercise: number;
   balance: number;
-  estLoss: number; // کیلوگرم، مثبت یعنی کاهش
+  estChange: number; // کیلوگرم، از روی کالری (منفی = کاهش)
   avgWeight: number | null;
   weightChange: number | null; // نسبت به دوره قبل (یا وزن شروع)
+  good: boolean | null;
 }
 
-function summarize(key: string, label: string, rows: DayRow[]): Omit<PeriodRow, "weightChange"> {
+function summarize(goal: Goal, key: string, label: string, rows: DayRow[]): Omit<PeriodRow, "weightChange"> {
   const logged = rows.filter((r) => r.intake > 0);
   const ws = rows.filter((r) => r.weight !== null).map((r) => r.weight!);
   const intake = logged.reduce((s, r) => s + r.intake, 0);
@@ -182,8 +269,9 @@ function summarize(key: string, label: string, rows: DayRow[]): Omit<PeriodRow, 
       : null,
     exercise: rows.reduce((s, r) => s + r.exercise, 0),
     balance,
-    estLoss: -balance / KCAL_PER_KG,
+    estChange: balance / KCAL_PER_KG,
     avgWeight: ws.length ? Math.round((ws.reduce((a, b) => a + b, 0) / ws.length) * 10) / 10 : null,
+    good: logged.length ? balanceIsGood(goal, balance, logged.length) : null,
   };
 }
 
@@ -196,18 +284,18 @@ function withChange(list: Omit<PeriodRow, "weightChange">[], startWeight: number
   });
 }
 
-/** هفته‌ها: هر ۷ روز از تاریخ شروع رژیم */
-export function weekly(days: DayRow[], s: Settings): PeriodRow[] {
+/** هفته‌ها: هر ۷ روز از تاریخ شروع برنامه */
+export function weekly(days: DayRow[], plan: Plan): PeriodRow[] {
   const out: Omit<PeriodRow, "weightChange">[] = [];
   for (let i = 0; i < days.length; i += 7) {
     const chunk = days.slice(i, i + 7);
-    out.push(summarize(`w${i / 7 + 1}`, `هفته ${(i / 7 + 1).toLocaleString("fa-IR")}`, chunk));
+    out.push(summarize(plan.goal, `w${i / 7 + 1}`, `هفته ${(i / 7 + 1).toLocaleString("fa-IR")}`, chunk));
   }
-  return withChange(out, s.startWeight);
+  return withChange(out, plan.startWeight);
 }
 
 /** ماه‌ها: ماه‌های تقویم شمسی */
-export function monthly(days: DayRow[], s: Settings): PeriodRow[] {
+export function monthly(days: DayRow[], plan: Plan): PeriodRow[] {
   const groups = new Map<string, { jy: number; jm: number; rows: DayRow[] }>();
   for (const d of days) {
     const [jy, jm] = toJalali(d.date);
@@ -216,6 +304,6 @@ export function monthly(days: DayRow[], s: Settings): PeriodRow[] {
     if (g) g.rows.push(d);
     else groups.set(k, { jy, jm, rows: [d] });
   }
-  const out = [...groups.entries()].map(([k, g]) => summarize(k, jMonthLabel(g.jy, g.jm), g.rows));
-  return withChange(out, s.startWeight);
+  const out = [...groups.entries()].map(([k, g]) => summarize(plan.goal, k, jMonthLabel(g.jy, g.jm), g.rows));
+  return withChange(out, plan.startWeight);
 }
