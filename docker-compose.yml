@@ -1,0 +1,21 @@
+# اجرای کامل (سایت + دیتابیس) با یک دستور:  docker compose up -d --build
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    env_file: .env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017
+    ports:
+      - "3000:3000"
+
+volumes:
+  mongo-data:

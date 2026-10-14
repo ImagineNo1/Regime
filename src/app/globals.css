@@ -1,0 +1,183 @@
+@import "tailwindcss";
+
+/* ---------- توکن‌های رنگ (روشن) ---------- */
+:root {
+  color-scheme: light;
+  --bg: #f4f6f5;
+  --surface: #ffffff;
+  --surface-2: #f1f5f4;
+  --border: #e3e8e6;
+  --ink: #0f1a17;
+  --ink-2: #4b5a56;
+  --muted: #8a9894;
+  --brand: #0f766e;
+  --brand-ink: #ffffff;
+  --brand-soft: #e3f4f1;
+  --good: #0f8a5f;
+  --good-soft: #e3f6ee;
+  --bad: #c43a3a;
+  --bad-soft: #fbeaea;
+  --warn: #b26b00;
+  --warn-soft: #fdf3e0;
+  --shadow: 0 1px 2px rgb(15 26 23 / 0.04), 0 4px 16px rgb(15 26 23 / 0.05);
+}
+
+/* ---------- تاریک ---------- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0c100f;
+    --surface: #151b1a;
+    --surface-2: #1c2422;
+    --border: #27312f;
+    --ink: #edf2f0;
+    --ink-2: #b3c0bc;
+    --muted: #7b8a86;
+    --brand: #2bb8a6;
+    --brand-ink: #06201c;
+    --brand-soft: #123330;
+    --good: #3cc58f;
+    --good-soft: #10302a;
+    --bad: #ec6b6b;
+    --bad-soft: #3a1a1a;
+    --warn: #e0a440;
+    --warn-soft: #36290f;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-soft: var(--brand-soft);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --font-sans: var(--font-vazir), "B Nazanin", Tahoma, sans-serif;
+  --shadow-card: var(--shadow);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+body {
+  font-feature-settings: "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+
+/* اعداد ستون‌ها هم‌عرض */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@layer components {
+/* فیلدهای فرم */
+.field {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0.6rem 0.8rem;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.field:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 22%, transparent);
+}
+.field::placeholder {
+  color: var(--muted);
+}
+.label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--ink-2);
+  margin-bottom: 0.35rem;
+  font-weight: 500;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 0.75rem;
+  padding: 0.6rem 1.1rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: filter 0.15s, background 0.15s, opacity 0.15s;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.btn-primary {
+  background: var(--brand);
+  color: var(--brand-ink);
+}
+.btn-primary:hover {
+  filter: brightness(1.08);
+}
+.btn-ghost {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.btn-ghost:hover {
+  filter: brightness(0.97);
+}
+
+/* جدول‌ها */
+.tbl {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.85rem;
+}
+.tbl th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-weight: 600;
+  text-align: right;
+  padding: 0.6rem 0.75rem;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+.tbl td {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.tbl tr:last-child td {
+  border-bottom: none;
+}
+.tbl tbody tr:hover td {
+  background: color-mix(in oklab, var(--surface-2) 60%, transparent);
+}
+
+}
+
+/* تولتیپ نمودار */
+.recharts-wrapper {
+  direction: ltr;
+}
+.recharts-cartesian-axis-tick-value {
+  font-family: var(--font-vazir), sans-serif;
+}
