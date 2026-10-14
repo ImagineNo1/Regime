@@ -3,24 +3,23 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { ObjectId } from "mongodb";
-import { getDb } from "@/lib/db";
-import { createSession, safeEqual, SESSION_COOKIE, SESSION_DAYS, verifySession } from "@/lib/auth";
+import type { ObjectId } from "mongodb";
+import { getDb, oid, seedBanks, type PlanDoc, type UserDoc } from "@/lib/db";
+import { createSession, SESSION_COOKIE, SESSION_DAYS } from "@/lib/auth";
+import { hashPassword, verifyPassword } from "@/lib/password";
+import { requireUser } from "@/lib/data";
 import { foodValues } from "@/lib/calc";
 import { parseNum } from "@/lib/format";
 import { isValidIso, jalaliTextToIso } from "@/lib/jalali";
 import { UNITS, type Unit } from "@/lib/seed";
-import { MEALS, type Meal } from "@/lib/types";
+import { MEALS, type Goal, type Meal } from "@/lib/types";
 
-export type FormState = { error?: string; ok?: boolean; at?: number; username?: string } | undefined;
+export type FormState =
+  | { error?: string; ok?: boolean; at?: number; values?: Record<string, string>; id?: string }
+  | undefined;
 
-const ok = (): FormState => ({ ok: true, at: Date.now() });
-const fail = (error: string): FormState => ({ error, at: Date.now() });
-
-async function requireAuth() {
-  const jar = await cookies();
-  if (!(await verifySession(jar.get(SESSION_COOKIE)?.value))) redirect("/login");
-}
+const ok = (extra: Partial<NonNullable<FormState>> = {}): FormState => ({ ok: true, at: Date.now(), ...extra });
+const fail = (error: string, values?: Record<string, string>): FormState => ({ error, at: Date.now(), values });
 
 function refresh() {
   revalidatePath("/", "layout");
@@ -30,32 +29,79 @@ function str(fd: FormData, k: string) {
   return String(fd.get(k) ?? "").trim();
 }
 
-function oid(id: string) {
-  return ObjectId.isValid(id) ? new ObjectId(id) : null;
-}
-
-/* ---------------- ورود / خروج ---------------- */
-
-export async function login(_: FormState, fd: FormData): Promise<FormState> {
-  const u = str(fd, "username");
-  const p = String(fd.get("password") ?? "");
-  const U = process.env.APP_USERNAME ?? "";
-  const P = process.env.APP_PASSWORD ?? "";
-  if (!U || !P) return fail("APP_USERNAME و APP_PASSWORD در فایل .env تنظیم نشده‌اند.");
-  const good = safeEqual(u, U) && safeEqual(p, P);
-  if (!good) {
-    await new Promise((r) => setTimeout(r, 700)); // کند کردن حدس زدن رمز
-    return { ...fail("نام کاربری یا رمز عبور اشتباه است."), username: u };
-  }
+async function startSession(user: Pick<UserDoc, "_id" | "sv">) {
   const jar = await cookies();
-  jar.set(SESSION_COOKIE, await createSession(U), {
+  jar.set(SESSION_COOKIE, await createSession(String(user._id), user.sv ?? 0), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production" && process.env.INSECURE_COOKIE !== "1",
     path: "/",
     maxAge: SESSION_DAYS * 86400,
   });
+}
+
+/* ---------------- حساب کاربری ---------------- */
+
+const USERNAME_RE = /^[a-z0-9_.-]{3,32}$/;
+const slow = () => new Promise((r) => setTimeout(r, 600)); // کند کردن حدس زدن رمز
+
+export async function login(_: FormState, fd: FormData): Promise<FormState> {
+  const username = str(fd, "username").toLowerCase();
+  const password = String(fd.get("password") ?? "");
+  const db = await getDb();
+  const user = await db.collection<UserDoc>("users").findOne({ username });
+  if (!user || !(await verifyPassword(password, user.passwordHash))) {
+    await slow();
+    return fail("نام کاربری یا رمز عبور اشتباه است.", { username });
+  }
+  await startSession(user);
   redirect("/");
+}
+
+export async function signup(_: FormState, fd: FormData): Promise<FormState> {
+  if (process.env.ALLOW_SIGNUP === "false") return fail("ثبت‌نام در این سایت بسته است.");
+  const values = {
+    name: str(fd, "name"),
+    username: str(fd, "username").toLowerCase(),
+    gender: str(fd, "gender"),
+    age: str(fd, "age"),
+    height: str(fd, "height"),
+  };
+  const password = String(fd.get("password") ?? "");
+  const password2 = String(fd.get("password2") ?? "");
+  const age = parseNum(values.age);
+  const height = parseNum(values.height);
+  if (!values.name) return fail("اسم خود را بنویسید.", values);
+  if (!USERNAME_RE.test(values.username))
+    return fail("نام کاربری باید ۳ تا ۳۲ حرف انگلیسی، عدد یا . _ - باشد.", values);
+  if (password.length < 8) return fail("رمز عبور باید حداقل ۸ کاراکتر باشد.", values);
+  if (password !== password2) return fail("تکرار رمز عبور یکسان نیست.", values);
+  if (values.gender !== "مرد" && values.gender !== "زن") return fail("جنسیت را انتخاب کنید.", values);
+  if (!age || age < 10 || age > 100) return fail("سن را درست وارد کنید.", values);
+  if (!height || height < 100 || height > 250) return fail("قد را به سانتی‌متر وارد کنید.", values);
+
+  const db = await getDb();
+  const users = db.collection<UserDoc>("users");
+  const doc = {
+    username: values.username,
+    passwordHash: await hashPassword(password),
+    sv: 0,
+    name: values.name.slice(0, 60),
+    gender: values.gender as UserDoc["gender"],
+    age,
+    height,
+    activePlanId: null,
+    createdAt: new Date(),
+  };
+  let id: ObjectId;
+  try {
+    id = (await users.insertOne(doc as UserDoc)).insertedId;
+  } catch {
+    return fail("این نام کاربری قبلاً گرفته شده است.", values);
+  }
+  await seedBanks(db, id);
+  await startSession({ _id: id, sv: 0 });
+  redirect("/plans/new?welcome=1");
 }
 
 export async function logout() {
@@ -64,17 +110,126 @@ export async function logout() {
   redirect("/login");
 }
 
+export async function saveProfile(_: FormState, fd: FormData): Promise<FormState> {
+  const u = await requireUser();
+  const name = str(fd, "name").slice(0, 60);
+  const gender = str(fd, "gender");
+  const age = parseNum(fd.get("age"));
+  const height = parseNum(fd.get("height"));
+  if (!name) return fail("اسم را بنویسید.");
+  if (gender !== "مرد" && gender !== "زن") return fail("جنسیت را انتخاب کنید.");
+  if (!age || age < 10 || age > 100) return fail("سن را درست وارد کنید.");
+  if (!height || height < 100 || height > 250) return fail("قد را به سانتی‌متر وارد کنید.");
+  const db = await getDb();
+  await db.collection<UserDoc>("users").updateOne({ _id: u._id }, { $set: { name, gender, age, height } });
+  refresh();
+  return ok();
+}
+
+export async function changePassword(_: FormState, fd: FormData): Promise<FormState> {
+  const u = await requireUser();
+  const current = String(fd.get("current") ?? "");
+  const next = String(fd.get("next") ?? "");
+  const next2 = String(fd.get("next2") ?? "");
+  if (!(await verifyPassword(current, u.passwordHash))) {
+    await slow();
+    return fail("رمز فعلی اشتباه است.");
+  }
+  if (next.length < 8) return fail("رمز جدید باید حداقل ۸ کاراکتر باشد.");
+  if (next !== next2) return fail("تکرار رمز جدید یکسان نیست.");
+  const db = await getDb();
+  const sv = (u.sv ?? 0) + 1; // نشست‌های دستگاه‌های دیگر باطل می‌شود
+  await db.collection<UserDoc>("users").updateOne({ _id: u._id }, { $set: { passwordHash: await hashPassword(next), sv } });
+  await startSession({ _id: u._id, sv });
+  return ok();
+}
+
+/* ---------------- برنامه‌ها ---------------- */
+
+const GOAL_SET: Goal[] = ["lose", "gain", "maintain"];
+
+export async function savePlan(_: FormState, fd: FormData): Promise<FormState> {
+  const u = await requireUser();
+  const id = str(fd, "id");
+  const values = Object.fromEntries(
+    ["name", "goal", "startDate", "endDate", "startWeight", "targetWeight", "dailyDelta", "activityFactor", "minCal"].map((k) => [k, str(fd, k)]),
+  );
+  const goal = values.goal as Goal;
+  const name = values.name.slice(0, 60);
+  const startDate = jalaliTextToIso(values.startDate);
+  const endDate = values.endDate ? jalaliTextToIso(values.endDate) : null;
+  const startWeight = parseNum(values.startWeight);
+  let targetWeight = parseNum(values.targetWeight);
+  let dailyDelta = parseNum(values.dailyDelta) ?? 0;
+  const activityFactor = parseNum(values.activityFactor);
+  const minCal = parseNum(values.minCal);
+
+  if (!name) return fail("برای برنامه یک اسم بنویسید.", values);
+  if (!GOAL_SET.includes(goal)) return fail("هدف برنامه را انتخاب کنید.", values);
+  if (!startDate) return fail("تاریخ شروع را شمسی و مثل ۱۴۰۵/۰۷/۲۲ بنویسید.", values);
+  if (values.endDate && !endDate) return fail("تاریخ پایان را شمسی و مثل ۱۴۰۵/۱۰/۲۲ بنویسید.", values);
+  if (endDate && endDate < startDate) return fail("تاریخ پایان باید بعد از تاریخ شروع باشد.", values);
+  if (!startWeight || startWeight < 25 || startWeight > 350) return fail("وزن شروع را درست وارد کنید.", values);
+  if (goal === "maintain") {
+    targetWeight = startWeight;
+    dailyDelta = 0;
+  } else {
+    if (!targetWeight || targetWeight < 25 || targetWeight > 350) return fail("وزن هدف را درست وارد کنید.", values);
+    if (goal === "lose" && targetWeight >= startWeight) return fail("در برنامه کاهش وزن، وزن هدف باید کمتر از وزن شروع باشد.", values);
+    if (goal === "gain" && targetWeight <= startWeight) return fail("در برنامه افزایش وزن، وزن هدف باید بیشتر از وزن شروع باشد.", values);
+    if (dailyDelta <= 0 || dailyDelta > 1500) return fail("کالری کسری/مازاد روزانه باید بین ۱ و ۱۵۰۰ باشد.", values);
+  }
+  if (!activityFactor || activityFactor < 1 || activityFactor > 2.5) return fail("ضریب تحرک را انتخاب کنید.", values);
+  if (!minCal || minCal < 800 || minCal > 4000) return fail("حداقل کالری ایمن را درست وارد کنید (۸۰۰ تا ۴۰۰۰).", values);
+
+  const db = await getDb();
+  const col = db.collection<PlanDoc>("plans");
+  const data = { name, goal, startDate, endDate, startWeight, targetWeight: targetWeight!, dailyDelta: Math.round(dailyDelta), activityFactor, minCal };
+  let planId = oid(id);
+  if (planId) {
+    const res = await col.updateOne({ _id: planId, userId: u._id }, { $set: data });
+    if (!res.matchedCount) return fail("برنامه پیدا نشد.", values);
+  } else {
+    planId = (await col.insertOne({ ...data, userId: u._id, createdAt: new Date() } as PlanDoc)).insertedId;
+  }
+  await db.collection<UserDoc>("users").updateOne({ _id: u._id }, { $set: { activePlanId: planId } });
+  refresh();
+  return ok({ id: String(planId) });
+}
+
+export async function deletePlan(id: string) {
+  const u = await requireUser();
+  const _id = oid(id);
+  if (!_id) return;
+  const db = await getDb();
+  await db.collection("plans").deleteOne({ _id, userId: u._id });
+  if (u.activePlanId && String(u.activePlanId) === id) {
+    await db.collection<UserDoc>("users").updateOne({ _id: u._id }, { $set: { activePlanId: null } });
+  }
+  refresh();
+}
+
+export async function setActivePlan(id: string) {
+  const u = await requireUser();
+  const _id = oid(id);
+  if (!_id) return;
+  const db = await getDb();
+  if (!(await db.collection("plans").findOne({ _id, userId: u._id }))) return;
+  await db.collection<UserDoc>("users").updateOne({ _id: u._id }, { $set: { activePlanId: _id } });
+  refresh();
+}
+
 /* ---------------- ثبت غذا ---------------- */
 
 export async function addFoodLog(_: FormState, fd: FormData): Promise<FormState> {
-  await requireAuth();
+  const u = await requireUser();
   const date = str(fd, "date");
   const meal = str(fd, "meal") as Meal;
   if (!isValidIso(date)) return fail("تاریخ نامعتبر است.");
   if (!MEALS.includes(meal)) return fail("وعده را انتخاب کنید.");
 
   const db = await getDb();
-  const foodId = str(fd, "foodId");
+  const foodId = oid(str(fd, "foodId"));
   const qty = parseNum(fd.get("qty"));
   const manualKcal = parseNum(fd.get("kcalManual"));
   const manualProtein = parseNum(fd.get("proteinManual"));
@@ -86,7 +241,7 @@ export async function addFoodLog(_: FormState, fd: FormData): Promise<FormState>
   let protein = 0;
   let manual = false;
 
-  const food = foodId && oid(foodId) ? await db.collection("foods").findOne({ _id: oid(foodId)! }) : null;
+  const food = foodId ? await db.collection("foods").findOne({ _id: foodId, userId: u._id }) : null;
   if (food) {
     name = food.name;
     unit = food.unit;
@@ -110,6 +265,7 @@ export async function addFoodLog(_: FormState, fd: FormData): Promise<FormState>
   if (kcal < 0 || kcal > 10000) return fail("عدد کالری منطقی نیست.");
 
   await db.collection("foodLogs").insertOne({
+    userId: u._id,
     date,
     meal,
     name: name.slice(0, 120),
@@ -126,20 +282,20 @@ export async function addFoodLog(_: FormState, fd: FormData): Promise<FormState>
 }
 
 export async function deleteFoodLog(id: string) {
-  await requireAuth();
+  const u = await requireUser();
   const _id = oid(id);
   if (!_id) return;
   const db = await getDb();
-  await db.collection("foodLogs").deleteOne({ _id });
+  await db.collection("foodLogs").deleteOne({ _id, userId: u._id });
   refresh();
 }
 
 /** کپی یک وعده (یا کل روز) از روزی دیگر */
 export async function copyMeal(from: string, to: string, meal: string) {
-  await requireAuth();
+  const u = await requireUser();
   if (!isValidIso(from) || !isValidIso(to)) return;
   const db = await getDb();
-  const filter: Record<string, unknown> = { date: from };
+  const filter: Record<string, unknown> = { userId: u._id, date: from };
   if (meal) filter.meal = meal;
   const docs = await db.collection("foodLogs").find(filter).sort({ createdAt: 1 }).toArray();
   if (!docs.length) return;
@@ -157,19 +313,20 @@ export async function copyMeal(from: string, to: string, meal: string) {
 /* ---------------- ثبت فعالیت ---------------- */
 
 export async function addActivityLog(_: FormState, fd: FormData): Promise<FormState> {
-  await requireAuth();
+  const u = await requireUser();
   const date = str(fd, "date");
   if (!isValidIso(date)) return fail("تاریخ نامعتبر است.");
   const db = await getDb();
-  const actId = str(fd, "activityId");
+  const actId = oid(str(fd, "activityId"));
   const minutes = parseNum(fd.get("minutes"));
   const kcalManual = parseNum(fd.get("kcalManual"));
   const note = str(fd, "note").slice(0, 200);
-  const act = actId && oid(actId) ? await db.collection("activities").findOne({ _id: oid(actId)! }) : null;
+  const act = actId ? await db.collection("activities").findOne({ _id: actId, userId: u._id }) : null;
   if (!act) return fail("فعالیت را از لیست انتخاب کنید.");
   if ((minutes === null || minutes <= 0) && kcalManual === null) return fail("مدت (دقیقه) را وارد کنید.");
   if (minutes !== null && minutes > 1440) return fail("مدت بیشتر از یک روز است!");
   await db.collection("activityLogs").insertOne({
+    userId: u._id,
     date,
     name: act.name,
     met: act.met,
@@ -183,73 +340,37 @@ export async function addActivityLog(_: FormState, fd: FormData): Promise<FormSt
 }
 
 export async function deleteActivityLog(id: string) {
-  await requireAuth();
+  const u = await requireUser();
   const _id = oid(id);
   if (!_id) return;
   const db = await getDb();
-  await db.collection("activityLogs").deleteOne({ _id });
+  await db.collection("activityLogs").deleteOne({ _id, userId: u._id });
   refresh();
 }
 
 /* ---------------- وزن ---------------- */
 
 export async function saveWeight(_: FormState, fd: FormData): Promise<FormState> {
-  await requireAuth();
+  const u = await requireUser();
   const date = str(fd, "date");
   if (!isValidIso(date)) return fail("تاریخ نامعتبر است.");
   const kg = parseNum(fd.get("kg"));
   const db = await getDb();
-  const col = db.collection<{ _id: string; kg: number }>("weights");
+  const col = db.collection("weightLogs");
   if (kg === null) {
-    await col.deleteOne({ _id: date });
+    await col.deleteOne({ userId: u._id, date });
   } else {
     if (kg < 25 || kg > 350) return fail("وزن منطقی نیست.");
-    await col.updateOne({ _id: date }, { $set: { kg: Math.round(kg * 10) / 10 } }, { upsert: true });
+    await col.updateOne({ userId: u._id, date }, { $set: { kg: Math.round(kg * 10) / 10 } }, { upsert: true });
   }
   refresh();
   return ok();
 }
 
-/* ---------------- تنظیمات ---------------- */
-
-export async function saveSettings(_: FormState, fd: FormData): Promise<FormState> {
-  await requireAuth();
-  const gender = str(fd, "gender");
-  const startDate = jalaliTextToIso(str(fd, "startDate"));
-  const nums = {
-    age: parseNum(fd.get("age")),
-    height: parseNum(fd.get("height")),
-    startWeight: parseNum(fd.get("startWeight")),
-    targetWeight: parseNum(fd.get("targetWeight")),
-    activityFactor: parseNum(fd.get("activityFactor")),
-    deficit: parseNum(fd.get("deficit")),
-    minCal: parseNum(fd.get("minCal")),
-  };
-  if (gender !== "مرد" && gender !== "زن") return fail("جنسیت را انتخاب کنید.");
-  if (!startDate) return fail("تاریخ شروع را شمسی و مثل ۱۴۰۵/۰۷/۲۲ بنویسید.");
-  for (const [k, v] of Object.entries(nums)) if (v === null || v <= 0) return fail(`مقدار «${LABELS[k]}» را درست وارد کنید.`);
-  const db = await getDb();
-  await db
-    .collection<{ _id: string }>("settings")
-    .updateOne({ _id: "profile" }, { $set: { gender, startDate, ...nums } }, { upsert: true });
-  refresh();
-  return ok();
-}
-
-const LABELS: Record<string, string> = {
-  age: "سن",
-  height: "قد",
-  startWeight: "وزن شروع",
-  targetWeight: "وزن هدف",
-  activityFactor: "ضریب تحرک",
-  deficit: "کسری کالری",
-  minCal: "حداقل کالری",
-};
-
-/* ---------------- بانک غذا و فعالیت ---------------- */
+/* ---------------- بانک غذا و فعالیت (هر کاربر جدا) ---------------- */
 
 export async function saveFood(_: FormState, fd: FormData): Promise<FormState> {
-  await requireAuth();
+  const u = await requireUser();
   const id = str(fd, "id");
   const name = str(fd, "name").slice(0, 120);
   const unit = str(fd, "unit") as Unit;
@@ -260,25 +381,26 @@ export async function saveFood(_: FormState, fd: FormData): Promise<FormState> {
   if (kcal === null || kcal < 0) return fail("کالری را وارد کنید.");
   const db = await getDb();
   const col = db.collection("foods");
-  const dup = await col.findOne({ name });
+  const dup = await col.findOne({ userId: u._id, name });
   if (dup && String(dup._id) !== id) return fail("غذایی با همین اسم در بانک هست.");
-  if (id && oid(id)) await col.updateOne({ _id: oid(id)! }, { $set: { name, unit, kcal, protein } });
-  else await col.insertOne({ name, unit, kcal, protein });
+  const _id = oid(id);
+  if (_id) await col.updateOne({ _id, userId: u._id }, { $set: { name, unit, kcal, protein } });
+  else await col.insertOne({ userId: u._id, name, unit, kcal, protein });
   refresh();
   return ok();
 }
 
 export async function deleteFood(id: string) {
-  await requireAuth();
+  const u = await requireUser();
   const _id = oid(id);
   if (!_id) return;
   const db = await getDb();
-  await db.collection("foods").deleteOne({ _id });
+  await db.collection("foods").deleteOne({ _id, userId: u._id });
   refresh();
 }
 
 export async function saveActivity(_: FormState, fd: FormData): Promise<FormState> {
-  await requireAuth();
+  const u = await requireUser();
   const id = str(fd, "id");
   const name = str(fd, "name").slice(0, 120);
   const met = parseNum(fd.get("met"));
@@ -286,19 +408,20 @@ export async function saveActivity(_: FormState, fd: FormData): Promise<FormStat
   if (met === null || met < 1 || met > 25) return fail("MET باید عددی بین ۱ و ۲۵ باشد.");
   const db = await getDb();
   const col = db.collection("activities");
-  const dup = await col.findOne({ name });
+  const dup = await col.findOne({ userId: u._id, name });
   if (dup && String(dup._id) !== id) return fail("فعالیتی با همین اسم هست.");
-  if (id && oid(id)) await col.updateOne({ _id: oid(id)! }, { $set: { name, met } });
-  else await col.insertOne({ name, met });
+  const _id = oid(id);
+  if (_id) await col.updateOne({ _id, userId: u._id }, { $set: { name, met } });
+  else await col.insertOne({ userId: u._id, name, met });
   refresh();
   return ok();
 }
 
 export async function deleteActivity(id: string) {
-  await requireAuth();
+  const u = await requireUser();
   const _id = oid(id);
   if (!_id) return;
   const db = await getDb();
-  await db.collection("activities").deleteOne({ _id });
+  await db.collection("activities").deleteOne({ _id, userId: u._id });
   refresh();
 }

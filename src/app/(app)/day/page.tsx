@@ -6,11 +6,22 @@ import { FoodForm } from "@/components/FoodForm";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Card, Empty } from "@/components/ui";
 import { WeightForm } from "@/components/WeightForm";
-import { activityKcal, buildDays } from "@/lib/calc";
-import { getActivities, getActivityLogs, getFoodLogs, getFoods, getSettings, getWeights } from "@/lib/data";
+import Link from "next/link";
+import { activityKcal, buildDays, fallbackPlan } from "@/lib/calc";
+import {
+  getActivities,
+  getActivityLogs,
+  getFoodLogs,
+  getFoods,
+  getPlans,
+  getWeights,
+  pickActivePlan,
+  planForDate,
+  requireUser,
+} from "@/lib/data";
 import { n0, n1, signed } from "@/lib/format";
 import { addDays, isValidIso, jShort, todayIso } from "@/lib/jalali";
-import { MEALS, type Meal } from "@/lib/types";
+import { GOALS, MEALS, type Meal } from "@/lib/types";
 
 function defaultMeal(): Meal {
   const h = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tehran", hour: "numeric", hourCycle: "h23" }).format(new Date()));
@@ -27,30 +38,28 @@ export default async function DayPage({ searchParams }: { searchParams: Promise<
   const today = todayIso();
   const date = isValidIso(d) ? d : today;
 
-  const [settings, foods, activities, foodLogs, actLogs, weights] = await Promise.all([
-    getSettings(),
-    getFoods(),
-    getActivities(),
-    getFoodLogs(date),
-    getActivityLogs(date),
-    getWeights(),
+  const u = await requireUser();
+  const [plans, foods, activities, foodLogs, actLogs, weights] = await Promise.all([
+    getPlans(u._id),
+    getFoods(u._id),
+    getActivities(u._id),
+    getFoodLogs(u._id, date),
+    getActivityLogs(u._id, date),
+    getWeights(u._id, { to: date }),
   ]);
   foods.sort((a, b) => a.name.localeCompare(b.name, "fa"));
   activities.sort((a, b) => a.name.localeCompare(b.name, "fa"));
 
-  // آمار همین روز با همان منطق جدول روزانه (وزن مرجع = آخرین وزن تا این روز)
-  const prior = weights.filter((w) => w.date <= date);
-  const row = buildDays(
-    { ...settings, startDate: date, startWeight: prior.length ? prior[prior.length - 1].kg : settings.startWeight },
-    foodLogs,
-    actLogs,
-    weights.filter((w) => w.date === date),
-    date,
-  )[0];
+  // این روز با تنظیمات برنامه‌ای که شاملش است حساب می‌شود؛ اگر هیچ برنامه‌ای نبود، «حفظ وزن»
+  const plan = planForDate(plans, pickActivePlan(plans, u.user.activePlanId, today), date);
+  // وزن مرجع: آخرین وزن ثبت‌شده تا این روز (داخل برنامه)، وگرنه وزن شروع برنامه
+  const inside = weights.filter((w) => !plan || w.date >= plan.startDate);
+  const refW = inside.at(-1)?.kg ?? plan?.startWeight ?? weights.at(-1)?.kg ?? 75;
+  const dayPlan = { ...(plan ?? fallbackPlan(refW, date)), startDate: date, endDate: date, startWeight: refW };
+  const row = buildDays(u.user, dayPlan, foodLogs, actLogs, weights.filter((w) => w.date === date), date)[0];
   const weightToday = weights.find((w) => w.date === date)?.kg ?? null;
   const remaining = row.goal - row.intake;
   const pctOfGoal = Math.min(1, row.intake / row.goal);
-  const before = date < settings.startDate;
   const yesterday = addDays(date, -1);
 
   return (
@@ -63,15 +72,20 @@ export default async function DayPage({ searchParams }: { searchParams: Promise<
         <DateNav date={date} today={today} />
       </div>
 
-      {before && (
+      {plan ? (
+        <p className="text-xs text-muted">
+          محاسبه با برنامه «<Link href={`/plans/${plan.id}`} className="font-semibold text-ink-2 hover:text-brand">{plan.name}</Link>» ({GOALS[plan.goal].label})
+        </p>
+      ) : (
         <p className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn">
-          این روز قبل از تاریخ شروع رژیم است و در گزارش‌ها و نمودارها حساب نمی‌شود.
+          این روز داخل هیچ برنامه‌ای نیست؛ هدف کالری برابر مصرف روزانه (حفظ وزن) در نظر گرفته شده.{" "}
+          <Link href="/plans/new" className="font-semibold underline">ساختن برنامه</Link>
         </p>
       )}
 
       {/* خلاصه روز */}
       <section className="grid gap-4 rounded-2xl border border-line bg-surface p-5 shadow-card md:grid-cols-[auto_1fr]">
-        <Ring value={pctOfGoal} over={row.intake > row.goal}>
+        <Ring value={pctOfGoal} over={row.intake > row.goal && dayPlan.goal !== "gain"}>
           <div className="text-center">
             <div className="tnum text-2xl font-extrabold">{n0(Math.abs(remaining))}</div>
             <div className="text-[11px] text-muted">{remaining >= 0 ? "کالری باقی‌مانده" : "کالری بیشتر از هدف"}</div>
@@ -85,10 +99,10 @@ export default async function DayPage({ searchParams }: { searchParams: Promise<
           <Mini label="کل سوزانده" value={n0(row.burned)} unit="کیلوکالری" hint={`پایه ${n0(row.tdee)} + ورزش`} />
           <div>
             <div className="text-xs text-muted">تراز امروز</div>
-            <div className={`tnum mt-0.5 text-lg font-bold ${row.balance === null ? "" : row.balance < 0 ? "text-good" : "text-bad"}`}>
+            <div className={`tnum mt-0.5 text-lg font-bold ${row.status === "good" ? "text-good" : row.status === "bad" ? "text-bad" : ""}`}>
               {row.balance === null ? "—" : signed(row.balance)}
             </div>
-            <div className="mt-1"><StatusBadge status={row.status} /></div>
+            <div className="mt-1"><StatusBadge status={row.status} goal={dayPlan.goal} /></div>
           </div>
         </div>
       </section>

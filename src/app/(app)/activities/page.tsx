@@ -1,9 +1,10 @@
 import { ActivityBank } from "@/components/ActivityBank";
 import { PageHeader } from "@/components/ui";
-import { getActivities } from "@/lib/data";
+import { getActivities, requireUser } from "@/lib/data";
 
 export default async function ActivitiesPage() {
-  const acts = await getActivities();
+  const u = await requireUser();
+  const acts = await getActivities(u._id);
   acts.sort((a, b) => a.name.localeCompare(b.name, "fa"));
   return (
     <div className="space-y-6">

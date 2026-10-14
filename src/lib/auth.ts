@@ -10,30 +10,22 @@ function secret() {
   return new TextEncoder().encode(s);
 }
 
-export async function createSession(username: string) {
-  return new SignJWT({ sub: username })
+/** sv = نسخه نشست کاربر؛ با تغییر رمز زیاد می‌شود تا نشست‌های قبلی باطل شوند */
+export async function createSession(userId: string, sv: number) {
+  return new SignJWT({ sub: userId, sv })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_DAYS}d`)
     .sign(secret());
 }
 
-export async function verifySession(token: string | undefined) {
-  if (!token) return false;
+export async function readSession(token: string | undefined): Promise<{ userId: string; sv: number } | null> {
+  if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secret(), { algorithms: ["HS256"] });
-    // اگر نام کاربری در .env عوض شود، نشست‌های قبلی باطل می‌شوند
-    return payload.sub === process.env.APP_USERNAME;
+    if (typeof payload.sub !== "string" || !/^[a-f0-9]{24}$/.test(payload.sub)) return null;
+    return { userId: payload.sub, sv: typeof payload.sv === "number" ? payload.sv : 0 };
   } catch {
-    return false;
+    return null;
   }
-}
-
-/** مقایسه با زمان ثابت تا از طول پاسخ نشود رمز را حدس زد */
-export function safeEqual(a: string, b: string) {
-  const ea = new TextEncoder().encode(a);
-  const eb = new TextEncoder().encode(b);
-  let diff = ea.length ^ eb.length;
-  for (let i = 0; i < Math.max(ea.length, eb.length); i++) diff |= (ea[i] ?? 0) ^ (eb[i] ?? 0);
-  return diff === 0;
 }

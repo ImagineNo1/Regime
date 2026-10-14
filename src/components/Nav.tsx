@@ -9,7 +9,8 @@ const ITEMS = [
   { href: "/", label: "داشبورد", icon: "home", mobile: true },
   { href: "/day", label: "ثبت روزانه", icon: "plus", mobile: true },
   { href: "/charts", label: "نمودارها", icon: "chart", mobile: true },
-  { href: "/reports", label: "گزارش‌ها", icon: "table", mobile: true },
+  { href: "/reports", label: "گزارش‌ها", icon: "table", mobile: false },
+  { href: "/plans", label: "برنامه‌ها", icon: "target", mobile: true },
   { href: "/foods", label: "بانک غذا", icon: "apple", mobile: false },
   { href: "/activities", label: "بانک فعالیت", icon: "run", mobile: false },
   { href: "/settings", label: "تنظیمات", icon: "gear", mobile: true },
@@ -19,7 +20,7 @@ function active(path: string, href: string) {
   return href === "/" ? path === "/" : path.startsWith(href);
 }
 
-export function Sidebar() {
+export function Sidebar({ name, switcher }: { name: string; switcher: React.ReactNode }) {
   const path = usePathname();
   return (
     <aside className="hidden lg:flex fixed inset-y-0 right-0 w-60 flex-col border-l border-line bg-surface px-4 py-6">
@@ -29,9 +30,10 @@ export function Sidebar() {
         </div>
         <div>
           <div className="font-bold">رژیم من</div>
-          <div className="text-xs text-muted">کالری‌شماری شخصی</div>
+          <div className="text-xs text-muted">سلام {name}</div>
         </div>
       </div>
+      <div className="mb-6">{switcher}</div>
       <nav className="flex flex-col gap-1">
         {ITEMS.map((it) => {
           const on = active(path, it.href);
@@ -65,7 +67,9 @@ export function BottomNav() {
     <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-line bg-surface/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
       <div className="grid grid-cols-5">
         {ITEMS.filter((i) => i.mobile).map((it) => {
-          const on = active(path, it.href) || (it.href === "/settings" && (path.startsWith("/foods") || path.startsWith("/activities")));
+          const on =
+            active(path, it.href) ||
+            (it.href === "/settings" && ["/foods", "/activities", "/reports"].some((p) => path.startsWith(p)));
           return (
             <Link
               key={it.href}
