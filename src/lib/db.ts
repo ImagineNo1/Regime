@@ -66,6 +66,7 @@ async function setup(db: Db) {
     db.collection("foodLogs").createIndex({ userId: 1, date: 1 }),
     db.collection("activityLogs").createIndex({ userId: 1, date: 1 }),
     db.collection("weightLogs").createIndex({ userId: 1, date: 1 }, { unique: true }),
+    db.collection("workoutLogs").createIndex({ userId: 1, week: 1, day: 1 }, { unique: true }),
   ]);
   await migrateLegacy(db);
 }

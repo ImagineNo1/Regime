@@ -7,6 +7,7 @@ import { getDb, oid, type PlanDoc, type UserDoc } from "./db";
 import { readSession, SESSION_COOKIE } from "./auth";
 import { todayIso } from "./jalali";
 import { buildDays } from "./calc";
+import { weekStart } from "./workout";
 import type { Activity, ActivityLog, Food, FoodLog, Plan, User, WeightLog } from "./types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -127,4 +128,11 @@ export async function getPlanData() {
   const weights = allWeights.filter((w) => w.date >= plan.startDate && (!plan.endDate || w.date <= plan.endDate));
   const days = buildDays(u.user, plan, foodLogs, actLogs, weights, today);
   return { user: u.user, plans, plan, days, weights, allWeights, today };
+}
+
+/** روزهای برنامه تمرینی که کاربر در هفته جاری (از شنبه) انجام داده */
+export async function getWorkoutDone(userId: ObjectId): Promise<number[]> {
+  const db = await getDb();
+  const docs = await db.collection("workoutLogs").find({ userId, week: weekStart(todayIso()) }).toArray();
+  return docs.map((d) => d.day as number);
 }
