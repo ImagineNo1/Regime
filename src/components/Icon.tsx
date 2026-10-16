@@ -18,6 +18,10 @@ const PATHS: Record<string, string> = {
   check: "M5 12l5 5L20 7",
   search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zm9 3-4-4",
   menu: "M4 6h16M4 12h16M4 18h16",
+  dumbbell: "M6 7v10M3 9v6M18 7v10M21 9v6M6 12h12",
+  play: "M7 4v16l13-8z",
+  pause: "M8 5v14M16 5v14",
+  clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2",
 };
 
 export function Icon({ name, size = 20, className = "" }: { name: keyof typeof PATHS | string; size?: number; className?: string }) {

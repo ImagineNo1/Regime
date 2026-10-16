@@ -11,6 +11,7 @@ const ITEMS = [
   { href: "/charts", label: "نمودارها", icon: "chart", mobile: true },
   { href: "/reports", label: "گزارش‌ها", icon: "table", mobile: false },
   { href: "/plans", label: "برنامه‌ها", icon: "target", mobile: true },
+  { href: "/workout", label: "تمرین در خانه", short: "تمرین", icon: "dumbbell", mobile: true },
   { href: "/foods", label: "بانک غذا", icon: "apple", mobile: false },
   { href: "/activities", label: "بانک فعالیت", icon: "run", mobile: false },
   { href: "/settings", label: "تنظیمات", icon: "gear", mobile: true },
@@ -65,7 +66,7 @@ export function BottomNav() {
   const path = usePathname();
   return (
     <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-line bg-surface/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
-      <div className="grid grid-cols-5">
+      <div className="grid grid-cols-6">
         {ITEMS.filter((i) => i.mobile).map((it) => {
           const on =
             active(path, it.href) ||
@@ -77,7 +78,7 @@ export function BottomNav() {
               className={`flex flex-col items-center gap-1 py-2.5 text-[11px] ${on ? "text-brand" : "text-muted"}`}
             >
               <Icon name={it.icon} size={22} />
-              {it.label}
+              {it.short ?? it.label}
             </Link>
           );
         })}

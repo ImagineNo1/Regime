@@ -10,7 +10,8 @@ import { hashPassword, verifyPassword } from "@/lib/password";
 import { requireUser } from "@/lib/data";
 import { foodValues } from "@/lib/calc";
 import { parseNum } from "@/lib/format";
-import { isValidIso, jalaliTextToIso } from "@/lib/jalali";
+import { isValidIso, jalaliTextToIso, todayIso } from "@/lib/jalali";
+import { getWorkoutDay, weekStart, workoutMinutes } from "@/lib/workout";
 import { UNITS, type Unit } from "@/lib/seed";
 import { MEALS, type Goal, type Meal } from "@/lib/types";
 
@@ -423,5 +424,41 @@ export async function deleteActivity(id: string) {
   if (!_id) return;
   const db = await getDb();
   await db.collection("activities").deleteOne({ _id, userId: u._id });
+  refresh();
+}
+
+/* ---------------- تمرین در خانه ---------------- */
+
+/** علامت زدن/برداشتن «انجام شد» برای یک روز برنامه در هفته جاری؛ همراهش یک ثبت فعالیت امروز ساخته/حذف می‌شود */
+export async function toggleWorkout(day: number) {
+  const u = await requireUser();
+  const w = getWorkoutDay(day);
+  if (!w) return;
+  const db = await getDb();
+  const date = todayIso();
+  const week = weekStart(date);
+  const logs = db.collection("workoutLogs");
+  const prev = await logs.findOne({ userId: u._id, week, day });
+  if (prev) {
+    await logs.deleteOne({ _id: prev._id });
+    await db.collection("activityLogs").deleteOne({ _id: prev.activityLogId, userId: u._id });
+  } else {
+    const act = await db.collection("activityLogs").insertOne({
+      userId: u._id,
+      date,
+      name: `تمرین در خانه: ${w.title}`,
+      met: w.met,
+      minutes: workoutMinutes(w),
+      kcalManual: null,
+      note: "",
+      createdAt: new Date(),
+    });
+    try {
+      await logs.insertOne({ userId: u._id, week, day, date, activityLogId: act.insertedId, createdAt: new Date() });
+    } catch {
+      // دابل‌کلیک: ایندکس یکتا جلوی ثبت دوم را گرفت
+      await db.collection("activityLogs").deleteOne({ _id: act.insertedId });
+    }
+  }
   refresh();
 }
